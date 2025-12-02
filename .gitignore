@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+venv/
+.venv/
+data/vector_store/
+data/raw/
+models/*.gguf
+.DS_Store
