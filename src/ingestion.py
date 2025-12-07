@@ -20,7 +20,7 @@ def get_embedding_model():
     else:
         device = "cpu"
         
-    print(f"📡 Carregando Embeddings em: {device.upper()}")
+    print(f"Carregando Embeddings em: {device.upper()}")
     return HuggingFaceEmbeddings(
         model_name=EMBEDDING_MODEL_NAME,
         model_kwargs={'device': device},
@@ -50,11 +50,11 @@ def ingest_evidence(limit_files=500):
     maildir = RAW_DATA_DIR / 'maildir'
 
     if not maildir.exists():
-        print(f"❌ ERRO: Pasta {maildir} não encontrada.")
+        print(f"ERRO: Pasta {maildir} não encontrada.")
         print("   -> Baixe o dataset Enron e coloque a pasta 'maildir' dentro de 'data/raw/'")
         return
 
-    print(f"📂 Lendo arquivos de evidência em: {maildir}")
+    print(f"Lendo arquivos de evidência em: {maildir}")
     for root, _, files in os.walk(maildir):
         for file in files:
             if file_count >= limit_files: break
@@ -73,20 +73,20 @@ def ingest_evidence(limit_files=500):
     splits = text_splitter.split_documents(documents)
     
     if splits:
-        print(f"💾 Salvando {len(splits)} chunks no ChromaDB ({COLLECTION_EVIDENCE})...")
+        print(f"Salvando {len(splits)} chunks no ChromaDB ({COLLECTION_EVIDENCE})...")
         Chroma.from_documents(
             documents=splits,
             embedding=embedding_model,
             persist_directory=str(VECTOR_STORE_DIR),
             collection_name=COLLECTION_EVIDENCE
         )
-        print("✅ Ingestão de Evidências concluída.")
+        print("Ingestão de Evidências concluída.")
     else:
-        print("⚠️ Nenhum documento processado.")
+        print("Nenhum documento processado.")
 
 def ingest_legal(limit_docs=200):
     embedding_model = get_embedding_model()
-    print("⚖️ Baixando jurisprudência (Streaming do Hugging Face)...")
+    print("Baixando jurisprudência (Streaming do Hugging Face)...")
     
     try:
         ds = load_dataset("joelniklaus/brazilian_court_decisions", split="train", streaming=True)
@@ -106,13 +106,13 @@ def ingest_legal(limit_docs=200):
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         splits = text_splitter.split_documents(legal_docs)
         
-        print(f"💾 Salvando {len(splits)} chunks no ChromaDB ({COLLECTION_LEGAL})...")
+        print(f"Salvando {len(splits)} chunks no ChromaDB ({COLLECTION_LEGAL})...")
         Chroma.from_documents(
             documents=splits,
             embedding=embedding_model,
             persist_directory=str(VECTOR_STORE_DIR),
             collection_name=COLLECTION_LEGAL
         )
-        print("✅ Ingestão Legal concluída.")
+        print("Ingestão Legal concluída.")
     except Exception as e:
-        print(f"❌ Erro ao baixar jurisprudência: {e}")
+        print(f"Erro ao baixar jurisprudência: {e}")
