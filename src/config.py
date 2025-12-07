@@ -13,7 +13,7 @@ VECTOR_STORE_DIR = DATA_DIR / "vector_store"
 MODELS_DIR = BASE_DIR / "models"
 
 # Configurações do Modelo
-MODEL_NAME = "Meta-Llama-3-8B-Instruct-Q4_K_M.gguf"
+MODEL_NAME = "Meta-Llama-3-8B-Instruct.Q4_K_M.gguf"
 # Tenta pegar do .env, senão usa o padrão
 MODEL_PATH = os.getenv("MODEL_PATH", str(MODELS_DIR / MODEL_NAME))
 

@@ -26,7 +26,8 @@ def interactive_mode():
                     break
                 
                 print("-" * 50)
-                chain.invoke({"question": user_input})
+                response = chain.invoke({"question": user_input})
+                print(response)
                 print("\n" + "-" * 50)
                 
             except KeyboardInterrupt:
@@ -81,8 +82,15 @@ def main():
         try:
             from src.rag_engine import get_rag_chain
             chain = get_rag_chain()
-            chain.invoke({"question": args.query})
-            print("\n" + "-" * 50)
+            
+            resposta = chain.invoke({"question": args.query})
+            
+            if not resposta: 
+                print("[AVISO] A resposta retornou vazia.")
+            else:
+                print("\n") 
+            
+            print("-" * 50)
         except Exception as e:
             print(f"[ERRO] Falha na execução: {e}")
 

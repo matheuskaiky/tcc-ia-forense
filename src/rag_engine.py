@@ -16,6 +16,7 @@ def load_llm():
         torch.cuda.empty_cache()
     gc.collect()
 
+    # O CallbackManager tenta fazer o streaming (imprimir enquanto gera)
     callback_manager = CallbackManager([StreamingStdOutCallbackHandler()])
     
     n_gpu = -1 if torch.cuda.is_available() else 0
@@ -28,12 +29,13 @@ def load_llm():
             model_path=MODEL_PATH,
             n_gpu_layers=n_gpu,
             n_ctx=8192,
-            temperature=0.6,    # ajuste para evitar recusas excessivas
-            top_p=0.95,         # núcleus sampling
-            repeat_penalty=1.1, # evita loops
+            temperature=0.6,
+            top_p=0.95,
+            repeat_penalty=1.1,
             max_tokens=4096,
             callback_manager=callback_manager,
-            verbose=False
+            verbose=False,
+            streaming=True
         )
         return llm
     except Exception as e:
@@ -84,7 +86,7 @@ def get_rag_chain():
             
         return ctx
 
-    template = """<|begin_of_text|><|start_header_id|>system<|end_header_id|>
+    template = """<|start_header_id|>system<|end_header_id|>
 
     Você é um Assistente Especialista em Forense Digital e Direito.
     Responda à pergunta do investigador baseando-se APENAS no contexto abaixo.
@@ -114,10 +116,6 @@ def get_rag_chain():
     return chain
 
 def run_diagnostics(query):
-    """
-    Função de diagnóstico para verificar se o Retrieval está funcionando
-    sem precisar carregar o LLM pesado.
-    """
     print(f"\n[DIAGNOSTICO] Testando recuperação para: '{query}'")
     
     try:
