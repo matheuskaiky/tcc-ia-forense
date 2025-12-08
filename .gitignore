@@ -6,5 +6,5 @@ venv/
 .venv/
 data/vector_store/
 data/raw/
-models/*.gguf
+models/
 .DS_Store

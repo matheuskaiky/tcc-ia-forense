@@ -28,7 +28,7 @@ AVAILABLE_MODELS = {
         "prompt_format": "chatml"
     },
     "qwen2.5-14b": {
-        "filename": "qwen2.5-14b-instruct-q4_k_m.gguf",
+        "filename": "qwen2.5-14b-instruct-q4_k_m/qwen2.5-14b-instruct-q4_k_m-00001-of-00003.gguf",
         "n_ctx": 8192,
         "prompt_format": "chatml"
     },
