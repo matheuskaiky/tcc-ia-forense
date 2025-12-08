@@ -16,109 +16,99 @@ def load_llm():
         torch.cuda.empty_cache()
     gc.collect()
 
-    # Define o handler de streaming
-    stream_handler = StreamingStdOutCallbackHandler()
-    
-    n_gpu = -1 if torch.cuda.is_available() else 0
-    
     print(f"[INFO] Carregando Llama 3 de: {MODEL_PATH}")
-    print(f"       Hardware: {'GPU (CUDA)' if n_gpu == -1 else 'CPU (Xeon)'}")
+    print(f"       Hardware: CPU (Xeon)")
 
-    try:
-        llm = LlamaCpp(
-            model_path=MODEL_PATH,
-            n_gpu_layers=n_gpu,
-            n_ctx=8192,
-            
-            # --- CONFIGURAÇÃO OTIMIZADA PARA CPU ---
-            n_batch=512,        
-            n_threads=8,        # Ajustado para seus 8 cores
-            temperature=0.1,    # Baixa criatividade para evitar alucinação
-            top_p=0.90,
-            repeat_penalty=1.2, 
-            max_tokens=2048,
-            # ---------------------------------------
-            
-            # CORREÇÃO CRÍTICA AQUI:
-            callbacks=[stream_handler], # Usa 'callbacks' (lista) em vez de callback_manager
-            verbose=False,
-            streaming=True
-        )
-        return llm
-    except Exception as e:
-        print(f"[ERRO] Falha ao carregar LlamaCpp: {e}")
-        sys.exit(1)
+    llm = LlamaCpp(
+        model_path=MODEL_PATH,
+        n_gpu_layers=0,
+        n_ctx=4096,
+        n_batch=64,
+        n_threads=8,
+        temperature=0.1,
+        top_p=0.9,
+        repeat_penalty=1.2,
+        max_tokens=1024,
+
+        # Streaming DESATIVADO → invoke funciona
+        streaming=False,
+
+        # callbacks REMOVIDOS, porque streaming=False
+        callbacks=None,
+        verbose=False,
+    )
+
+    return llm
 
 def get_rag_chain():
     embedding_model = get_embedding_model()
-    
+
+    llm = load_llm()   # <--- FALTAVA ISSO AQUI !!!
+
     vectorstore_ev = Chroma(
         persist_directory=str(VECTOR_STORE_DIR),
         collection_name=COLLECTION_EVIDENCE,
         embedding_function=embedding_model
     )
+
     vectorstore_leg = Chroma(
         persist_directory=str(VECTOR_STORE_DIR),
         collection_name=COLLECTION_LEGAL,
         embedding_function=embedding_model
     )
 
-    retriever_ev = vectorstore_ev.as_retriever(search_type="mmr", search_kwargs={"k": 3})
-    retriever_leg = vectorstore_leg.as_retriever(search_type="similarity", search_kwargs={"k": 2})
+    retriever_ev = vectorstore_ev.as_retriever(
+        search_type="mmr",
+        search_kwargs={"k": 1}
+    )
+
+    retriever_leg = vectorstore_leg.as_retriever(
+        search_type="similarity",
+        search_kwargs={"k": 1}
+    )
 
     def combine_contexts(query):
         print("\n[BUSCA] Recuperando evidências e leis no banco vetorial...")
         docs_ev = retriever_ev.invoke(query)
         docs_leg = retriever_leg.invoke(query)
-        
+
         print(f"[STATUS] Encontrados: {len(docs_ev)} e-mails e {len(docs_leg)} leis.")
         print("[PROCESSAMENTO] Gerando resposta... (O texto deve aparecer abaixo)\n")
-        
+
         ctx = ""
-        if docs_ev:
-            ctx += "--- EVIDENCIAS DOS EMAILS ---\n"
-            for d in docs_ev:
-                src = d.metadata.get('source', 'Desconhecido')
-                # Limpeza simples de quebras de linha para economizar contexto
-                clean_content = d.page_content.replace('\n', ' ')
-                ctx += f"Fonte: {src}\nConteúdo: {clean_content}\n\n"
-        
-        if docs_leg:
-            ctx += "--- JURISPRUDENCIA BRASILEIRA ---\n"
-            for d in docs_leg:
-                src = d.metadata.get('source', 'Desconhecido')
-                clean_content = d.page_content.replace('\n', ' ')
-                ctx += f"Decisão: {src}\nConteúdo: {clean_content}\n\n"
-        
+
+        for d in docs_ev:
+            ctx += f"[EMAIL] Fonte: {d.metadata.get('source')}\n{d.page_content}\n\n"
+
+        for d in docs_leg:
+            ctx += f"[LEI] Fonte: {d.metadata.get('source')}\n{d.page_content}\n\n"
+
         return ctx if ctx else "Nenhum documento encontrado."
 
-    # Prompt direto e sem tokens especiais manuais para evitar conflito
-    template = """Você é um perito forense digital. Use APENAS o contexto abaixo para responder à pergunta.
-    
-    REGRAS:
-    1. Responda em Português.
-    2. Cite o nome do arquivo ou decisão (ex: Fonte: 123.) para cada afirmação.
-    3. Se não houver informação no contexto, diga "Não encontrei evidências".
-    
-    CONTEXTO:
-    {context}
-    
-    PERGUNTA: {question}
-    
-    RELATÓRIO FORENSE:
-    """
-    
-    prompt = PromptTemplate.from_template(template)
-    llm = load_llm()
+    prompt = PromptTemplate.from_template("""
+Use APENAS o contexto abaixo.
+
+CONTEXTO:
+{context}
+
+PERGUNTA:
+{question}
+
+RESPOSTA:
+""")
 
     chain = (
-        {"context": lambda x: combine_contexts(x["question"]), "question": lambda x: x["question"]}
+        {
+            "context": lambda x: combine_contexts(x["question"]),
+            "question": lambda x: x["question"],
+        }
         | prompt
         | llm
         | StrOutputParser()
     )
-    
+
     return chain
+
 
 def run_diagnostics(query):
     print(f"\n[DIAGNOSTICO] Testando recuperação para: '{query}'")
@@ -141,3 +131,4 @@ def run_diagnostics(query):
             print("   [FALHA] Nenhum documento retornado.")
     except Exception as e:
         print(f"   [ERRO CRITICO] {e}")
+
