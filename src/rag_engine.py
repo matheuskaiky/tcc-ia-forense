@@ -23,13 +23,22 @@ def load_llm():
         model_path=MODEL_PATH,
         n_gpu_layers=0,
         n_ctx=MODEL_CONTEXT_SIZE,
-        n_batch=128,  # Aumentado para melhor throughput
+        n_batch=512,  # Aumentado para melhor throughput
         n_threads=8,
         temperature=0.1,
         top_p=0.9,
         top_k=40,
         repeat_penalty=1.1,
-        max_tokens=512,
+        max_tokens=2048,
+
+        stop=[
+            "<|endoftext|>",   # Fim padrão do Qwen/Llama
+            "<|im_end|>",      # Fim de turno de chat
+            "PERGUNTA:",       # Evita que ele invente uma nova pergunta (seu caso atual)
+            "Human:",          # Evita alucinação de chat
+            "\n\n---"          # Para se tentar criar separadores infinitos
+        ],
+
         streaming=False,
         callbacks=None,
         verbose=False,
