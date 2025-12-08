@@ -88,7 +88,7 @@ def main():
             if not resposta: 
                 print("[AVISO] A resposta retornou vazia.")
             else:
-                print("\n") 
+                print(resposta) 
             
             print("-" * 50)
         except Exception as e:
