@@ -1,161 +1,158 @@
 import torch
 import gc
+import sys
 from langchain_community.llms import LlamaCpp
 from langchain_chroma import Chroma
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.callbacks import CallbackManager, StreamingStdOutCallbackHandler
 from src.config import (
-    MODEL_PATH, MODEL_CONTEXT_SIZE, DEFAULT_MODEL,
-    VECTOR_STORE_DIR, COLLECTION_EVIDENCE, COLLECTION_LEGAL
+    MODEL_PATH, VECTOR_STORE_DIR, COLLECTION_EVIDENCE, COLLECTION_LEGAL
 )
 from src.ingestion import get_embedding_model
 
 def load_llm():
+    # Limpeza de memória
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     gc.collect()
 
-    print(f"[INFO] Carregando modelo: {DEFAULT_MODEL}")
-    print(f"       Caminho: {MODEL_PATH}")
-    print(f"       Hardware: CPU (Xeon)")
+    # Callback para efeito de digitação (Streaming)
+    callback_manager = CallbackManager([StreamingStdOutCallbackHandler()])
+    
+    n_gpu = -1 if torch.cuda.is_available() else 0
+    
+    print(f"[INFO] Carregando Llama 3 de: {MODEL_PATH}")
+    print(f"       Modo: {'GPU (CUDA)' if n_gpu == -1 else 'CPU (Xeon)'}")
 
-    llm = LlamaCpp(
-        model_path=MODEL_PATH,
-        n_gpu_layers=0,
-        n_ctx=MODEL_CONTEXT_SIZE,
-        n_batch=128,  # Aumentado para melhor throughput
-        n_threads=8,
-        temperature=0.1,
-        top_p=0.9,
-        top_k=40,
-        repeat_penalty=1.1,
-        max_tokens=512,
-        streaming=False,
-        callbacks=None,
-        verbose=False,
-    )
-
-    return llm
+    try:
+        llm = LlamaCpp(
+            model_path=MODEL_PATH,
+            n_gpu_layers=n_gpu,
+            n_ctx=8192,
+            
+            # --- Configuração Otimizada ---
+            n_batch=512,
+            n_threads=8,
+            temperature=0.1,    # Baixa temperatura para precisão
+            top_p=0.9,
+            repeat_penalty=1.1, 
+            max_tokens=2048,
+            
+            # Stop tokens para evitar que ele alucine novas perguntas
+            stop=["<|eot_id|>", "<|end_of_text|>", "PERGUNTA:", "Human:", "AI:"],
+            
+            callback_manager=callback_manager,
+            verbose=False,
+            streaming=False
+        )
+        return llm
+    except Exception as e:
+        print(f"[ERRO] Falha ao carregar LlamaCpp: {e}")
+        sys.exit(1)
 
 def get_rag_chain():
     embedding_model = get_embedding_model()
-    llm = load_llm()
-
+    
     vectorstore_ev = Chroma(
         persist_directory=str(VECTOR_STORE_DIR),
         collection_name=COLLECTION_EVIDENCE,
         embedding_function=embedding_model
     )
-
     vectorstore_leg = Chroma(
         persist_directory=str(VECTOR_STORE_DIR),
         collection_name=COLLECTION_LEGAL,
         embedding_function=embedding_model
     )
 
-    retriever_ev = vectorstore_ev.as_retriever(
-        search_type="similarity",
-        search_kwargs={"k": 3}
-    )
-
-    retriever_leg = vectorstore_leg.as_retriever(
-        search_type="similarity",
-        search_kwargs={"k": 2}
-    )
+    retriever_ev = vectorstore_ev.as_retriever(search_type="mmr", search_kwargs={"k": 3})
+    retriever_leg = vectorstore_leg.as_retriever(search_type="similarity", search_kwargs={"k": 2})
 
     def combine_contexts(query):
         print("\n[BUSCA] Recuperando evidências e leis no banco vetorial...")
         docs_ev = retriever_ev.invoke(query)
         docs_leg = retriever_leg.invoke(query)
-
-        print(f"[STATUS] Encontrados: {len(docs_ev)} e-mails e {len(docs_leg)} leis.")
-        print("[PROCESSAMENTO] Gerando resposta...\n")
-
-        ctx = ""
-
-        if docs_ev:
-            ctx += "=== EVIDÊNCIAS (E-MAILS) ===\n\n"
-            for i, d in enumerate(docs_ev, 1):
-                sender = d.metadata.get('sender', 'Desconhecido')
-                subject = d.metadata.get('subject', 'Sem assunto')
-                date = d.metadata.get('date', 'Data desconhecida')
-                
-                ctx += f"E-MAIL {i}:\n"
-                ctx += f"Remetente: {sender}\n"
-                ctx += f"Assunto: {subject}\n"
-                ctx += f"Data: {date}\n"
-                ctx += f"Conteúdo:\n{d.page_content}\n"
-                ctx += "-" * 50 + "\n\n"
         
+        print(f"[STATUS] Encontrados: {len(docs_ev)} e-mails e {len(docs_leg)} leis.")
+        print("[PROCESSAMENTO] Gerando Relatório Técnico...\n")
+        print("-" * 50)
+        
+        ctx = ""
+        # 1. Bloco de Evidências
+        if docs_ev:
+            ctx += "=== EVIDÊNCIAS DIGITAIS (DATASET ENRON) ===\n"
+            for d in docs_ev:
+                src = d.metadata.get('source', 'Desconhecido')
+                sender = d.metadata.get('sender', 'N/A')
+                # Limpa quebras de linha para economizar tokens
+                clean_content = d.page_content.replace('\n', ' ')
+                ctx += f"[ARQUIVO: {src} | REMETENTE: {sender}]\nCONTEÚDO: {clean_content}\n\n"
+        
+        # 2. Bloco Legal (Melhorado para citação)
         if docs_leg:
-            ctx += "=== BASE LEGAL ===\n\n"
-            for i, d in enumerate(docs_leg, 1):
-                ctx += f"TEXTO LEGAL {i}:\n{d.page_content}\n\n"
+            ctx += "=== BASE JURÍDICA (JURISPRUDÊNCIA BRASILEIRA) ===\n"
+            for d in docs_leg:
+                src = d.metadata.get('source', 'N/A')
+                court = d.metadata.get('court', 'Tribunal N/A')
+                clean_content = d.page_content.replace('\n', ' ')
+                # Formatação explícita para o LLM
+                ctx += f"[DECISÃO ID: {src} | TRIBUNAL: {court}]\nEMENTA: {clean_content}\n\n"
+        
+        return ctx if ctx else "Nenhuma informação encontrada."
 
-        return ctx if ctx else "Nenhum documento relevante encontrado."
+    # --- NOVO PROMPT LIMPO ---
+    template = """<|start_header_id|>system<|end_header_id|>
 
-    # Prompt otimizado para Qwen/Sabiá (melhor em português)
-    prompt = PromptTemplate.from_template("""Você é um assistente especializado em análise forense de e-mails corporativos.
-
-**INSTRUÇÕES CRÍTICAS:**
-1. Analise APENAS as informações presentes no CONTEXTO abaixo
-2. Cite sempre o número do e-mail ao mencionar informações (Ex: "Conforme E-MAIL 1...")
-3. Se não houver evidências suficientes, responda: "Não foram encontradas evidências sobre [tema] nos documentos analisados"
-4. NÃO invente nomes, datas ou eventos que não estejam explicitamente no contexto
-5. Para análises forenses, mencione: remetentes, destinatários, datas e conteúdo relevante
-
-CONTEXTO:
-{context}
-
-PERGUNTA: {question}
-
-ANÁLISE FORENSE:""")
+    Você é um Perito Forense Digital. Sua tarefa é gerar um Relatório Técnico com base EXCLUSIVA nos documentos abaixo.
+    
+    ESTRUTURA DO RELATÓRIO:
+    1. ANÁLISE FORENSE: Cite fatos, nomes, datas e arquivos (ex: "Conforme e-mail X...").
+    2. ANÁLISE JURÍDICA: Cite as decisões judiciais recuperadas (ID e Tribunal) e explique se elas se aplicam ou não ao caso.
+    
+    IMPORTANTE:
+    - Se a jurisprudência recuperada não for relevante, diga: "A Decisão [ID] sobre [assunto] não se aplica diretamente pois..."
+    - Não invente informações.
+    
+    DOCUMENTOS RECUPERADOS:
+    {context}<|eot_id|><|start_header_id|>user<|end_header_id|>
+    
+    PERGUNTA DO INVESTIGADOR: {question}<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+    
+    RELATÓRIO TÉCNICO:
+    
+    ### 1. ANÁLISE FORENSE (Fatos)
+    """
+    
+    prompt = PromptTemplate.from_template(template)
+    llm = load_llm()
 
     chain = (
-        {
-            "context": lambda x: combine_contexts(x["question"]),
-            "question": lambda x: x["question"],
-        }
+        {"context": lambda x: combine_contexts(x["question"]), "question": lambda x: x["question"]}
         | prompt
         | llm
         | StrOutputParser()
     )
-
+    
     return chain
 
-
+# Mantive a função de diagnóstico igual para seus testes
 def run_diagnostics(query):
     print(f"\n[DIAGNOSTICO] Testando recuperação para: '{query}'")
-    print(f"[MODELO] Usando: {DEFAULT_MODEL}\n")
-    
     try:
         embedding_model = get_embedding_model()
-        vectorstore_ev = Chroma(
-            persist_directory=str(VECTOR_STORE_DIR),
-            collection_name=COLLECTION_EVIDENCE,
-            embedding_function=embedding_model
-        )
+        vectorstore_ev = Chroma(persist_directory=str(VECTOR_STORE_DIR), collection_name=COLLECTION_EVIDENCE, embedding_function=embedding_model)
+        vectorstore_leg = Chroma(persist_directory=str(VECTOR_STORE_DIR), collection_name=COLLECTION_LEGAL, embedding_function=embedding_model)
         
-        print("=" * 70)
-        print("TESTE DE BUSCA (Similarity Search)")
-        print("=" * 70)
-        
-        results = vectorstore_ev.similarity_search(query, k=3)
-        
-        if results:
-            print(f"\n✓ Encontrados {len(results)} documentos relevantes:\n")
-            for i, doc in enumerate(results, 1):
-                print(f"┌─ DOCUMENTO {i} " + "─" * 55)
-                print(f"│ Arquivo: {doc.metadata.get('source', 'N/A')}")
-                print(f"│ Remetente: {doc.metadata.get('sender', 'N/A')}")
-                print(f"│ Assunto: {doc.metadata.get('subject', 'N/A')}")
-                print(f"│ Data: {doc.metadata.get('date', 'N/A')}")
-                print(f"│")
-                preview = doc.page_content[:200].replace('\n', ' ')
-                print(f"│ Conteúdo: {preview}...")
-                print(f"└" + "─" * 68 + "\n")
-        else:
-            print("✗ Nenhum documento retornado.")
+        print("\n--- Evidências ---")
+        evs = vectorstore_ev.similarity_search(query, k=2)
+        for i, d in enumerate(evs): print(f"{i+1}. {d.metadata.get('source')}")
+            
+        print("\n--- Leis ---")
+        legs = vectorstore_leg.similarity_search(query, k=2)
+        for i, d in enumerate(legs): 
+            src = d.metadata.get('source')
+            court = d.metadata.get('court', 'N/A')
+            print(f"{i+1}. {src} ({court})")
             
     except Exception as e:
-        print(f"✗ ERRO: {e}")
+        print(f"[ERRO] {e}")
